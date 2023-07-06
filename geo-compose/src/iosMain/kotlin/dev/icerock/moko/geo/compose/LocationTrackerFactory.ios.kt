@@ -7,6 +7,7 @@ package dev.icerock.moko.geo.compose
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import dev.icerock.moko.geo.LocationTracker
+import dev.icerock.moko.geo.LocationTrackerAccuracy
 import dev.icerock.moko.permissions.PermissionsController
 import platform.CoreLocation.CLLocationAccuracy
 import platform.CoreLocation.kCLLocationAccuracyBest
@@ -20,7 +21,7 @@ actual fun rememberLocationTrackerFactory(accuracy: LocationTrackerAccuracy): Lo
             override fun createLocationTracker(): LocationTracker {
                 return LocationTracker(
                     permissionsController = dev.icerock.moko.permissions.ios.PermissionsController(),
-                    accuracy = accuracy.toIosAccuracy()
+                    accuracy = accuracy,
                 )
             }
 
@@ -29,17 +30,9 @@ actual fun rememberLocationTrackerFactory(accuracy: LocationTrackerAccuracy): Lo
             ): LocationTracker {
                 return LocationTracker(
                     permissionsController = permissionsController,
-                    accuracy = accuracy.toIosAccuracy()
+                    accuracy = accuracy,
                 )
             }
         }
-    }
-}
-
-private fun LocationTrackerAccuracy.toIosAccuracy(): CLLocationAccuracy {
-    return when (this) {
-        LocationTrackerAccuracy.Best -> kCLLocationAccuracyBest
-        LocationTrackerAccuracy.Medium -> kCLLocationAccuracyKilometer
-        LocationTrackerAccuracy.LowPower -> kCLLocationAccuracyReduced
     }
 }

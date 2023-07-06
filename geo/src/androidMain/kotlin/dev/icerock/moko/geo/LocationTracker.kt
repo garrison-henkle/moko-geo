@@ -6,16 +6,15 @@ package dev.icerock.moko.geo
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.location.Criteria
+import android.location.LocationListener
+import android.location.LocationManager
 import android.os.Build
 import androidx.fragment.app.FragmentManager
+import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleObserver
-import androidx.lifecycle.OnLifecycleEvent
-import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.LocationCallback
-import com.google.android.gms.location.LocationRequest
-import com.google.android.gms.location.LocationResult
-import com.google.android.gms.location.LocationServices
+import androidx.lifecycle.LifecycleOwner
+import dev.icerock.moko.permissions.PartiallyDeniedException
 import dev.icerock.moko.permissions.Permission
 import dev.icerock.moko.permissions.PermissionsController
 import kotlinx.coroutines.CoroutineScope
@@ -29,74 +28,69 @@ import kotlinx.coroutines.launch
 
 actual class LocationTracker(
     actual val permissionsController: PermissionsController,
-    interval: Long = 1000,
-    priority: Int = LocationRequest.PRIORITY_HIGH_ACCURACY
-) : LocationCallback() {
-    private var locationProviderClient: FusedLocationProviderClient? = null
+    private val intervalMs: Long = 1_000,
+    private val distanceM: Float = 500f,
+    actual val accuracy: LocationTrackerAccuracy = LocationTrackerAccuracy.Best,
+) {
+    private var locationManager: LocationManager? = null
     private var isStarted: Boolean = false
-    private val locationRequest = LocationRequest().also {
-        it.interval = interval
-        it.priority = priority
-    }
     private val locationsChannel = Channel<LatLng>(Channel.CONFLATED)
     private val extendedLocationsChannel = Channel<ExtendedLocation>(Channel.CONFLATED)
     private val trackerScope = CoroutineScope(Dispatchers.Main)
 
+    private val locationListener = LocationListener { location ->
+        onLocationResult(location)
+    }
+
     fun bind(lifecycle: Lifecycle, context: Context, fragmentManager: FragmentManager) {
         permissionsController.bind(lifecycle, fragmentManager)
 
-        locationProviderClient = LocationServices.getFusedLocationProviderClient(context)
+        locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
 
         @SuppressLint("MissingPermission")
         if (isStarted) {
-            locationProviderClient?.requestLocationUpdates(locationRequest, this, null)
+            locationManager?.requestLocationUpdates(accuracy.toProvider(), intervalMs, distanceM, locationListener)
         }
 
-        lifecycle.addObserver(object : LifecycleObserver {
-            @OnLifecycleEvent(Lifecycle.Event.ON_DESTROY)
-            fun onDestroy() {
-                locationProviderClient?.removeLocationUpdates(this@LocationTracker)
-                locationProviderClient = null
+        lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onDestroy(owner: LifecycleOwner) {
+                locationManager?.removeUpdates(locationListener)
             }
         })
     }
 
-    override fun onLocationResult(locationResult: LocationResult) {
-        super.onLocationResult(locationResult)
-
-        val lastLocation = locationResult.lastLocation ?: return
-
+    private fun onLocationResult(location: android.location.Location) {
         val speedAccuracy = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) null
-        else lastLocation.speedAccuracyMetersPerSecond.toDouble()
+        else location.speedAccuracyMetersPerSecond.toDouble()
 
         val bearingAccuracy = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) null
-        else lastLocation.bearingAccuracyDegrees.toDouble()
+        else location.bearingAccuracyDegrees.toDouble()
 
         val verticalAccuracy = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) null
-        else lastLocation.verticalAccuracyMeters.toDouble()
+        else location.verticalAccuracyMeters.toDouble()
 
         val latLng = LatLng(
-            lastLocation.latitude,
-            lastLocation.longitude
+            location.latitude,
+            location.longitude
         )
 
         val locationPoint = Location(
             coordinates = latLng,
-            coordinatesAccuracyMeters = lastLocation.accuracy.toDouble()
+            coordinatesAccuracyMeters = location.accuracy.toDouble()
         )
 
         val speed = Speed(
-            speedMps = lastLocation.speed.toDouble(),
+            speedMps = location.speed.toDouble(),
             speedAccuracyMps = speedAccuracy
         )
 
         val azimuth = Azimuth(
-            azimuthDegrees = lastLocation.bearing.toDouble(),
+            azimuthDegrees = location.bearing.toDouble(),
             azimuthAccuracyDegrees = bearingAccuracy
         )
 
         val altitude = Altitude(
-            altitudeMeters = lastLocation.altitude,
+            altitudeMeters = location.altitude,
             altitudeAccuracyMeters = verticalAccuracy
         )
 
@@ -105,7 +99,7 @@ actual class LocationTracker(
             azimuth = azimuth,
             speed = speed,
             altitude = altitude,
-            timestampMs = lastLocation.time
+            timestampMs = location.time
         )
 
         trackerScope.launch {
@@ -115,17 +109,25 @@ actual class LocationTracker(
     }
 
     @SuppressLint("MissingPermission")
-    actual suspend fun startTracking() {
-        permissionsController.providePermission(Permission.LOCATION)
+    actual suspend fun startTracking(
+        requestPrecise: Boolean,
+        requirePrecise: Boolean,
+    ) {
+        val permission = if(requestPrecise) Permission.LOCATION else Permission.COARSE_LOCATION
+        try{
+            permissionsController.providePermission(permission, allowPartialAndroidGrants = true)
+        } catch (ex: PartiallyDeniedException){
+            if(requirePrecise || Permission.COARSE_LOCATION !in ex.granted){ throw ex }
+        }
         // if permissions request failed - execution stops here
 
         isStarted = true
-        locationProviderClient?.requestLocationUpdates(locationRequest, this, null)
+        locationManager?.requestLocationUpdates(accuracy.toProvider(), intervalMs, distanceM, locationListener)
     }
 
     actual fun stopTracking() {
         isStarted = false
-        locationProviderClient?.removeLocationUpdates(this)
+        locationManager?.removeUpdates(locationListener)
     }
 
     actual fun getLocationsFlow(): Flow<LatLng> {
@@ -155,4 +157,23 @@ actual class LocationTracker(
             awaitClose { job.cancel() }
         }
     }
+
+    private fun LocationTrackerAccuracy.toProvider(): String = (locationManager
+        ?.getProviders(true)?.let{ providers ->
+            val android12 = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            when(this){
+                LocationTrackerAccuracy.Best -> when{
+                    android12 && LocationManager.FUSED_PROVIDER in providers -> LocationManager.FUSED_PROVIDER
+                    LocationManager.GPS_PROVIDER in providers -> LocationManager.GPS_PROVIDER
+                    LocationManager.NETWORK_PROVIDER in providers -> LocationManager.NETWORK_PROVIDER
+                    else -> LocationManager.PASSIVE_PROVIDER
+                }
+                LocationTrackerAccuracy.Medium -> {
+                    if(LocationManager.NETWORK_PROVIDER in providers){
+                        LocationManager.NETWORK_PROVIDER
+                    } else LocationManager.PASSIVE_PROVIDER
+                }
+                LocationTrackerAccuracy.LowPower -> LocationManager.PASSIVE_PROVIDER
+            }
+        } ?: LocationManager.PASSIVE_PROVIDER).also{ android.util.Log.e("mokoEnhanced", "using location provider: $it") }
 }

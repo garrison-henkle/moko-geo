@@ -17,10 +17,12 @@ import kotlinx.coroutines.launch
 import platform.CoreLocation.CLLocationAccuracy
 import platform.CoreLocation.CLLocationManager
 import platform.CoreLocation.kCLLocationAccuracyBest
+import platform.CoreLocation.kCLLocationAccuracyKilometer
+import platform.CoreLocation.kCLLocationAccuracyReduced
 
 actual class LocationTracker(
     actual val permissionsController: PermissionsController,
-    accuracy: CLLocationAccuracy = kCLLocationAccuracyBest
+    actual val accuracy: LocationTrackerAccuracy,
 ) {
     private val locationsChannel = Channel<LatLng>(Channel.BUFFERED)
     private val extendedLocationsChannel = Channel<ExtendedLocation>(Channel.BUFFERED)
@@ -32,11 +34,15 @@ actual class LocationTracker(
     )
     private val locationManager = CLLocationManager().apply {
         delegate = tracker
-        desiredAccuracy = accuracy
+        desiredAccuracy = accuracy.toIosAccuracy()
     }
 
-    actual suspend fun startTracking() {
-        permissionsController.providePermission(Permission.LOCATION)
+    actual suspend fun startTracking(
+        requestPrecise: Boolean,
+        requirePrecise: Boolean,
+    ) {
+        val permission = if(requestPrecise) Permission.LOCATION else Permission.COARSE_LOCATION
+        permissionsController.providePermission(permission, allowPartialAndroidGrants = true)
         // if permissions request failed - execution stops here
 
         locationManager.startUpdatingLocation()
@@ -71,6 +77,14 @@ actual class LocationTracker(
             }
 
             awaitClose { job.cancel() }
+        }
+    }
+
+    private fun LocationTrackerAccuracy.toIosAccuracy(): CLLocationAccuracy {
+        return when (this) {
+            LocationTrackerAccuracy.Best -> kCLLocationAccuracyBest
+            LocationTrackerAccuracy.Medium -> kCLLocationAccuracyKilometer
+            LocationTrackerAccuracy.LowPower -> kCLLocationAccuracyReduced
         }
     }
 }

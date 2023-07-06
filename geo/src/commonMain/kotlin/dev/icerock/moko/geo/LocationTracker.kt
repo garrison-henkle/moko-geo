@@ -9,8 +9,12 @@ import kotlinx.coroutines.flow.Flow
 
 expect class LocationTracker {
     val permissionsController: PermissionsController
+    val accuracy: LocationTrackerAccuracy
 
-    suspend fun startTracking() // can be suspended for request permission
+    suspend fun startTracking(
+        requestPrecise: Boolean = false,
+        requirePrecise: Boolean = false,
+    ) // can be suspended for request permission
     fun stopTracking()
 
     fun getLocationsFlow(): Flow<LatLng>

@@ -5,8 +5,22 @@
 enableFeaturePreview("VERSION_CATALOGS")
 enableFeaturePreview("TYPESAFE_PROJECT_ACCESSORS")
 
+val localProperties = java.util.Properties().apply{
+    File("${rootDir.absolutePath}/local.properties").inputStream().use {
+        load(it)
+    }
+}
+
 dependencyResolutionManagement {
     repositories {
+        maven{
+            setUrl(localProperties.getProperty("artifactory.maven.url"))
+            credentials {
+                username = localProperties.getProperty("artifactory.username")
+                password = localProperties.getProperty("artifactory.password")
+            }
+            isAllowInsecureProtocol = true
+        }
         mavenCentral()
         google()
     }

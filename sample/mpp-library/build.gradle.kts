@@ -8,7 +8,6 @@ dependencies {
     commonMainImplementation(libs.coroutines)
 
     androidMainImplementation(libs.lifecycle)
-    androidMainImplementation(libs.playServicesLocation)
 
     commonMainApi(projects.geo)
     commonMainApi(libs.mokoMvvmCore)

@@ -51,7 +51,7 @@ class TrackerViewModel(
     fun onStartPressed() {
         viewModelScope.launch {
             try {
-                locationTracker.startTracking()
+                locationTracker.startTracking(requestPrecise = true)
             } catch (exc: Throwable) {
                 _textLocation.value = exc.toString()
                 _textExtendedLocation.value = exc.toString()

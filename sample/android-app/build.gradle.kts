@@ -18,7 +18,6 @@ android {
 
 dependencies {
     implementation(libs.appCompat)
-    implementation(libs.playServicesLocation)
     implementation(libs.mokoMvvmDatabinding)
 
     implementation(projects.sample.mppLibrary)
